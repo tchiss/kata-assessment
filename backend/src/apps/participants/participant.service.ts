@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/sequelize';
 import { Participant } from './models/participant.model';
 import { CreateParticipantInputDto } from './dtos/input/create-participant.dto';
@@ -23,6 +23,10 @@ export class ParticipantService {
         return existingParticipant;
       }
 
+      if (!participant.eventId) {
+        throw new Error('Event ID is required to create a participant');
+      }
+
       const createdUser = await this.authService.createUser({
         email: participant.email,
         name: participant.name,
@@ -32,6 +36,8 @@ export class ParticipantService {
         email: createdUser.email,
         name: createdUser.name,
         auth0Id: createdUser.user_id,
+        eventId: participant.eventId,
+        role: participant.role || 'viewer',
       });
 
       const { id, email, name } = newParticipant.toJSON();
@@ -54,5 +60,17 @@ export class ParticipantService {
       );
       throw new Error('Could not delete participants by event');
     }
+  }
+
+  async getById(participantId: string) {
+    const participant = await this.participantModel.findByPk(participantId);
+
+    if (!participant) {
+      throw new NotFoundException(
+        `Participant with ID ${participantId} not found`,
+      );
+    }
+
+    return participant;
   }
 }

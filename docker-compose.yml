@@ -1,0 +1,17 @@
+version: '3.5'
+services:
+  postgres:
+    image: postgres:15
+    container_name: postgres_container
+    ports:
+      - '5432:5432'
+    environment:
+      POSTGRES_USER: kata_user
+      POSTGRES_PASSWORD: kata_pass
+      POSTGRES_DB: kata_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

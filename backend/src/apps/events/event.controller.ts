@@ -40,7 +40,7 @@ export class EventController {
     return await this.eventService.checkConflicts(checkConflictsDto);
   }
 
-  @Get('search')
+  @Get('content/search')
   async searchEvents(@Query('query') query: string) {
     if (!query) {
       return [];

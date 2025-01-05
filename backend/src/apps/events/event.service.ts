@@ -1,10 +1,15 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/sequelize';
-import { Op } from 'sequelize';
+import { Op, Sequelize } from 'sequelize';
 import { Event } from './models/event.model';
 import { CreateEventInputDto } from './dtos/input/create-event.dto';
 import { CheckConflictsInputDto } from './dtos/input/check-conflicts-input.dto';
 import { ParticipantService } from '../participants/participant.service';
+import { Participant } from '../participants/models/participant.model';
 
 @Injectable()
 export class EventService {
@@ -32,17 +37,39 @@ export class EventService {
     );
 
     return await this.eventModel.findByPk(event.id, {
-      include: { all: true },
+      include: {
+        model: Participant,
+        attributes: [
+          'id',
+          'name',
+          'email',
+          'eventId',
+          'role',
+          'createdAt',
+          'updatedAt',
+        ],
+      },
     });
   }
 
   async getEventById(eventId: string) {
     const event = await this.eventModel.findByPk(eventId, {
-      include: { all: true },
+      include: {
+        model: Participant,
+        attributes: [
+          'id',
+          'name',
+          'email',
+          'eventId',
+          'role',
+          'createdAt',
+          'updatedAt',
+        ],
+      },
     });
 
     if (!event) {
-      throw new BadRequestException(`Event with ID ${eventId} not found`);
+      throw new NotFoundException(`Event with ID ${eventId} not found`);
     }
 
     return event;
@@ -70,58 +97,88 @@ export class EventService {
       throw new BadRequestException('Start time must be before end time');
     }
 
-    const conflicts = await this.eventModel.findAll({
+    const participants = await Promise.all(
+      userIds.map((userId) => this.participantService.getById(userId)),
+    );
+
+    const auth0Ids = participants.map((p) => p.auth0Id);
+
+
+    const all = await this.eventModel.findAll({
       where: {
         [Op.and]: [
-          {
-            [Op.or]: userIds.map((userId) => ({
-              participants: { [Op.contains]: [userId] },
-            })),
-          },
-          {
-            [Op.or]: [
-              {
-                startTime: { [Op.lte]: endTime },
-                endTime: { [Op.gte]: startTime },
-              },
-            ],
-          },
-        ],
-      },
-      include: { all: true },
-    });
-
-    const conflictingUsers = conflicts
-      .flatMap((event) => event.participants)
-      .filter((participant) => userIds.includes(participant.id));
-
-    return {
-      conflictingUsers: Array.from(
-        new Set(conflictingUsers.map((user) => user.id)),
-      ),
-    };
-  }
-
-  async searchEvents(query: string) {
-    return await this.eventModel.findAll({
-      where: {
-        [Op.or]: [
-          { title: { [Op.iLike]: `%${query}%` } },
-          { type: { [Op.iLike]: `%${query}%` } },
+          { startTime: { [Op.lte]: endTime } },
+          { endTime: { [Op.gte]: startTime } },
         ],
       },
       include: [
         {
           association: 'participants',
-          where: {
-            [Op.or]: [
-              { name: { [Op.iLike]: `%${query}%` } },
-              { email: { [Op.iLike]: `%${query}%` } },
-            ],
-          },
+          where: { auth0Id: { [Op.in]: auth0Ids } },
+          required: true,
+        },
+      ],
+    });
+    const conflicts = await this.eventModel.findAll({
+      where: {
+        [Op.and]: [
+          { startTime: { [Op.lte]: endTime } },
+          { endTime: { [Op.gte]: startTime } },
+        ],
+      },
+      include: [
+        {
+          association: 'participants',
+          where: { auth0Id: { [Op.in]: auth0Ids } },
+          required: true,
+        },
+      ],
+    });
+
+    const conflictingUsers = conflicts.flatMap((event) =>
+      event.participants.map((participant) => participant.auth0Id),
+    );
+
+    return {
+      conflictingUsers: Array.from(new Set(conflictingUsers)),
+    };
+  }
+
+  async searchEvents(query: string) {
+    return await this.eventModel.findAll({
+      include: [
+        {
+          association: 'participants',
+          attributes: [
+            'id',
+            'name',
+            'email',
+            'eventId',
+            'role',
+            'createdAt',
+            'updatedAt',
+          ],
           required: false,
         },
       ],
+      where: {
+        [Op.or]: [
+          Sequelize.where(Sequelize.fn('LOWER', Sequelize.col('Event.title')), {
+            [Op.like]: `%${query.toLowerCase()}%`,
+          }),
+          Sequelize.where(Sequelize.fn('LOWER', Sequelize.col('Event.type')), {
+            [Op.like]: `%${query.toLowerCase()}%`,
+          }),
+          Sequelize.where(
+            Sequelize.fn('LOWER', Sequelize.col('participants.name')),
+            { [Op.like]: `%${query.toLowerCase()}%` },
+          ),
+          Sequelize.where(
+            Sequelize.fn('LOWER', Sequelize.col('participants.email')),
+            { [Op.like]: `%${query.toLowerCase()}%` },
+          ),
+        ],
+      },
     });
   }
 }

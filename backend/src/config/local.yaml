@@ -3,12 +3,12 @@ app:
 
 # Only for technical assessment purposes, in a real world scenario, this should be stored in a secure way
 db:
-  uri: 'postgres://kata_user:kata_user@localhost:5432/kata_db'
+  uri: 'postgres://kata_user:kata_pass@localhost:5432/kata_db'
   host: localhost
   port: 5432
   database: kata_db
   user: kata_user
-  password: kata_user
+  password: kata_pass
 
 auth0:
     domain: dev-wtwyfkpnfrmqfjgv.us.auth0.com
