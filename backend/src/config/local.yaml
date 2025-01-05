@@ -1,0 +1,17 @@
+app:
+  port: 3400
+
+# Only for technical assessment purposes, in a real world scenario, this should be stored in a secure way
+db:
+  uri: 'postgres://kata_user:kata_user@localhost:5432/kata_db'
+  host: localhost
+  port: 5432
+  database: kata_db
+  user: kata_user
+  password: kata_user
+
+auth0:
+    domain: dev-wtwyfkpnfrmqfjgv.us.auth0.com
+    audience: https://dev-wtwyfkpnfrmqfjgv.us.auth0.com/api/v2/
+    clientId: gV95MEgDa0yWgrZTsB9mZ7GLSksyLTKy
+    clientSecret: luyx7dQCzo8CXYs4Agyyfn5FCbvff_BBJ3Xm-ygbnZEkRA0aj3UHG2bvlA12azyN
