@@ -64,7 +64,8 @@ The frontend will be available at `http://localhost:3000`.
 
 ### 6. Verify the Setup
 - Open your browser and navigate to `http://localhost:3000` for the frontend.
-- Access the API directly at `http://localhost:3400` (e.g., Swagger documentation if enabled).
+- Access the API directly at `http://localhost:3400/docs` (e.g., Swagger documentation if enabled).
+- Health check endpoint is available at `http://localhost:3400/health`.
 
 ## Additional Notes
 
