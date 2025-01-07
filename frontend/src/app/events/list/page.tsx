@@ -1,6 +1,5 @@
 "use client";
-
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Card,
   CardBody,
@@ -13,20 +12,42 @@ import {
   Badge,
   Container,
   Input,
+  Alert,
 } from "reactstrap";
 import { useRouter } from "next/navigation";
-import eventsData from "@/Data/events/mockEvents.json";
-import { Event } from "@/Types/EventType";
+import { useAppDispatch, useAppSelector } from "@/Redux/Hooks";
+import {
+  fetchEvents,
+  createEvent,
+  updateEvent,
+  checkConflicts,
+  deleteEvent,
+} from "@/Redux/Reducers/EventSlice";
+import { Event, EventOutput } from '@/Types/EventType';
 import CreateOrEditEventModal from "@/Components/CreateOrEditEventModal";
-import { formatDate, mapRawEventsToTypedEvents, translateEventType } from "@/Helpers/EventsHelper";
+import { formatDate, translateEventType } from "@/Helpers/EventsHelper";
 
 const EventList: React.FC = () => {
   const router = useRouter();
-  const [eventList, setEventList] = useState<Event[]>(mapRawEventsToTypedEvents(eventsData));
-  const [filteredEvents, setFilteredEvents] = useState<Event[]>(eventList);
+  const dispatch = useAppDispatch();
+  const { events, loading } = useAppSelector((state) => state.events);
+
+  const [filteredEvents, setFilteredEvents] = useState<EventOutput[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [eventToEdit, setEventToEdit] = useState<Event | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [alertMessage, setAlertMessage] = useState<string | null>(null);
+  const [alertType, setAlertType] = useState<"success" | "danger" | undefined>();
+
+
+
+  useEffect(() => {
+    dispatch(fetchEvents());
+  }, [dispatch]);
+
+  useEffect(() => {
+    setFilteredEvents(events);
+  }, [events]);
 
   const toggleModal = () => {
     setIsModalOpen(!isModalOpen);
@@ -42,30 +63,69 @@ const EventList: React.FC = () => {
     toggleModal();
   };
 
-  const handleSave = (event: Event) => {
-    if (event.id) {
-      setEventList((prev) =>
-        prev.map((e) => (e.id === event.id ? event : e))
-      );
-    } else {
-      const newEvent = { ...event, id: String(new Date().getTime()) };
-      setEventList((prev) => [...prev, newEvent]);
+  const handleSave = async (event: Event | EventOutput) => {
+    try {
+      if (event.id) {
+        const conflictCheckPayload = {
+          startTime: event.startTime,
+          endTime: event.endTime,
+          emails: event.participants.map((participant) => participant.email),
+        }
+        const result = await dispatch(checkConflicts(conflictCheckPayload)).unwrap();
+        if (result.conflictedEvents && result.conflictedEvents.length > 0) {
+          console.warn("Conflits détectés :", result.conflictedEvents);
+          alert(
+            "Conflits détectés avec d'autres événements. Veuillez vérifier les horaires."
+          );
+          return;
+        }
+        await dispatch(updateEvent(event)).unwrap();
+      } else {
+        await dispatch(createEvent({
+          title: event.title,
+          type: event.type,
+          startTime: event.startTime,
+          endTime: event.endTime,
+          participants: event.participants.map((participant) => ({
+            name: participant.name,
+            email: participant.email,
+            role: participant.role,
+          })),
+        })).unwrap();
+        setAlertMessage("Événement créé avec succès.");
+        setAlertType("success");
+      }
+
+      toggleModal();
+    } catch (error) {
+      setAlertMessage("Une erreur s'est produite. Veuillez réessayer.");
+      setAlertType("danger");
+      console.error("Erreur lors de la sauvegarde :", error);
     }
-    setFilteredEvents(() => [...eventList]);
   };
 
-  const handleDelete = (id: string) => {
-    const updatedList = eventList.filter((event) => event.id !== id);
-    setEventList(updatedList);
-    setFilteredEvents(updatedList);
+  const handleDelete = async (id: string) => {
+    try {
+      const confirm = window.confirm("Êtes-vous sûr de vouloir supprimer cet événement ?");
+      if (!confirm) return;
+
+      await dispatch(deleteEvent(id)).unwrap();
+      setAlertMessage("Événement supprimé avec succès.");
+      setAlertType("success");
+    } catch (error) {
+      console.error("Erreur lors de la suppression :", error);
+      setAlertMessage("Une erreur s'est produite lors de la suppression de l'événement.");
+      setAlertType("danger");
+    }
   };
+
 
   const handleSearch = (query: string) => {
     setSearchQuery(query);
     const lowerQuery = query.toLowerCase();
 
-    const filtered = eventList.filter(
-      (event) =>
+    const filtered = events.filter(
+      (event: Event) =>
         event.title.toLowerCase().includes(lowerQuery) ||
         translateEventType(event.type).toLowerCase().includes(lowerQuery) ||
         event.participants.some(
@@ -82,9 +142,18 @@ const EventList: React.FC = () => {
     router.push("/events/calendar");
   };
 
+  if (loading) {
+    return <div>Chargement...</div>;
+  }
+
   return (
     <div style={{ backgroundColor: "#f8f9fa", minHeight: "100vh", padding: "2rem 0" }}>
       <Container>
+        {alertMessage && (
+          <Alert color={alertType} toggle={() => setAlertMessage(null)}>
+            {alertMessage}
+          </Alert>
+        )}
         <div className="d-flex justify-content-between align-items-center mb-4">
           <h1 className="mb-0">Liste des Événements</h1>
           <div>
@@ -113,8 +182,8 @@ const EventList: React.FC = () => {
                     {translateEventType(event.type)}
                   </CardSubtitle>
                   <CardText>
-                    <strong>Début :</strong> {formatDate(event.start)} <br />
-                    <strong>Fin :</strong> {formatDate(event.end)}
+                    <strong>Début :</strong> {formatDate(event.startTime)} <br />
+                    <strong>Fin :</strong> {formatDate(event.endTime)}
                   </CardText>
                   <CardText>
                     <strong>Participants :</strong>
@@ -128,7 +197,7 @@ const EventList: React.FC = () => {
                     <Button color="primary" size="sm" onClick={() => handleEdit(event)}>
                       Modifier
                     </Button>
-                    <Button color="danger" size="sm" onClick={() => handleDelete(event.id!)}>
+                    <Button color="danger" size="sm" onClick={() => handleDelete(event.id)}>
                       Supprimer
                     </Button>
                   </div>

@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import localFont from "next/font/local";
+import NoSsr from '@/utils/NoSsr';
+import MainProvider from '@/app/MainProvider';
 import "./globals.css";
 import 'bootstrap/dist/css/bootstrap.min.css';
 
@@ -28,7 +30,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
-        {children}
+        <NoSsr>
+          <MainProvider>{children}</MainProvider>
+        </NoSsr>
       </body>
     </html>
   );

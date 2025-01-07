@@ -17,14 +17,14 @@ import { Formik, Form } from "formik";
 import * as Yup from "yup";
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
-import { Event, EVENT_TYPE, Participant } from '@/Types/EventType';
+import { Event, EVENT_TYPE, Participant } from "@/Types/EventType";
 
 const EventSchema = Yup.object().shape({
   title: Yup.string().required("Titre requis"),
-  start: Yup.date().required("Date de début requise"),
-  end: Yup.date()
+  startTime: Yup.date().required("Date de début requise"),
+  endTime: Yup.date()
     .required("Date de fin requise")
-    .min(Yup.ref("start"), "La date de fin doit être postérieure à la date de début"),
+    .min(Yup.ref("startTime"), "La date de fin doit être postérieure à la date de début"),
   type: Yup.string()
     .oneOf(["Personnel", "Équipe", "Projet"], "Type invalide")
     .required("Type requis"),
@@ -38,21 +38,25 @@ interface Props {
 }
 
 const CreateOrEditEventModal: React.FC<Props> = ({ isOpen, toggle, onSave, eventToEdit }) => {
-  const [startDate, setStartDate] = useState<Date | null>(null);
-  const [endDate, setEndDate] = useState<Date | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [participantName, setParticipantName] = useState("");
   const [participantEmail, setParticipantEmail] = useState("");
+  const [participantRole, setParticipantRole] = useState<"viewer" | "editor">("viewer");
+
+  const initialValues: Event = {
+    id: eventToEdit?.id,
+    title: eventToEdit?.title || "",
+    startTime: eventToEdit?.startTime || "",
+    endTime: eventToEdit?.endTime || "",
+    type: eventToEdit?.type || EVENT_TYPE.INIT,
+    participants: eventToEdit?.participants || [],
+  };
 
   useEffect(() => {
     if (isOpen && eventToEdit) {
       setParticipants(eventToEdit.participants || []);
-      setStartDate(new Date(eventToEdit.start));
-      setEndDate(new Date(eventToEdit.end));
     } else if (isOpen) {
       setParticipants([]);
-      setStartDate(null);
-      setEndDate(null);
     }
   }, [isOpen, eventToEdit]);
 
@@ -60,10 +64,15 @@ const CreateOrEditEventModal: React.FC<Props> = ({ isOpen, toggle, onSave, event
     if (participantName && participantEmail) {
       setParticipants([
         ...participants,
-        { id: String(new Date().getTime()), name: participantName, email: participantEmail },
+        {
+          name: participantName,
+          email: participantEmail,
+          role: participantRole,
+        },
       ]);
       setParticipantName("");
       setParticipantEmail("");
+      setParticipantRole("viewer");
     }
   };
 
@@ -74,21 +83,10 @@ const CreateOrEditEventModal: React.FC<Props> = ({ isOpen, toggle, onSave, event
   const handleSubmit = (values: Event) => {
     const updatedEvent = {
       ...values,
-      start: startDate ? startDate.toISOString() : "",
-      end: endDate ? endDate.toISOString() : "",
       participants,
     };
     onSave(updatedEvent);
     toggle();
-  };
-
-  const initialValues: Event = eventToEdit || {
-    id: undefined,
-    title: "",
-    start: "",
-    end: "",
-    type: EVENT_TYPE.INIT,
-    participants: [],
   };
 
   return (
@@ -110,9 +108,7 @@ const CreateOrEditEventModal: React.FC<Props> = ({ isOpen, toggle, onSave, event
                 <Input
                   name="title"
                   type="text"
-                  className={`form-control ${
-                    touched.title && errors.title ? "is-invalid" : ""
-                  }`}
+                  className={`form-control ${touched.title && errors.title ? "is-invalid" : ""}`}
                   value={values.title}
                   onChange={handleChange}
                   onBlur={handleBlur}
@@ -127,9 +123,7 @@ const CreateOrEditEventModal: React.FC<Props> = ({ isOpen, toggle, onSave, event
                 <Input
                   name="type"
                   type="select"
-                  className={`form-control ${
-                    touched.type && errors.type ? "is-invalid" : ""
-                  }`}
+                  className={`form-control ${touched.type && errors.type ? "is-invalid" : ""}`}
                   value={values.type}
                   onChange={handleChange}
                   onBlur={handleBlur}
@@ -146,49 +140,44 @@ const CreateOrEditEventModal: React.FC<Props> = ({ isOpen, toggle, onSave, event
               <FormGroup>
                 <Label>Début</Label>
                 <DatePicker
-                  selected={startDate}
-                  onChange={(date) => {
-                    setStartDate(date);
-                    setFieldValue("start", date?.toISOString());
-                  }}
+                  selected={values.startTime ? new Date(values.startTime) : null}
+                  onChange={(date) => setFieldValue("startTime", date?.toISOString())}
                   minDate={new Date()}
                   showTimeSelect
                   timeFormat="HH:mm"
                   timeIntervals={15}
                   dateFormat="Pp"
                   className={`form-control datepicker-input ${
-                    touched.start && errors.start ? "is-invalid" : ""
+                    touched.startTime && errors.startTime ? "is-invalid" : ""
                   }`}
                   placeholderText="Sélectionnez la date et l'heure de début"
                 />
-                {errors.start && touched.start && (
-                  <div className="text-danger">{errors.start}</div>
+                {errors.startTime && touched.startTime && (
+                  <div className="text-danger">{errors.startTime}</div>
                 )}
               </FormGroup>
               <FormGroup>
                 <Label>Fin</Label>
                 <DatePicker
-                  selected={endDate}
-                  onChange={(date) => {
-                    setEndDate(date);
-                    setFieldValue("end", date?.toISOString());
-                  }}
+                  selected={values.endTime ? new Date(values.endTime) : null}
+                  onChange={(date) => setFieldValue("endTime", date?.toISOString())}
                   minDate={new Date()}
                   showTimeSelect
-                  minTime={new Date()}
+                  minTime={new Date(new Date().setHours(0, 0, 0, 0))}
+                  maxTime={new Date(new Date().setHours(23, 59, 59, 999))}
                   timeFormat="HH:mm"
                   timeIntervals={15}
                   dateFormat="Pp"
                   className={`form-control datepicker-input ${
-                    touched.end && errors.end ? "is-invalid" : ""
+                    touched.endTime && errors.endTime ? "is-invalid" : ""
                   }`}
                   placeholderText="Sélectionnez la date et l'heure de fin"
                 />
-                {errors.end && touched.end && (
-                  <div className="text-danger">{errors.end}</div>
+
+                {errors.endTime && touched.endTime && (
+                  <div className="text-danger">{errors.endTime}</div>
                 )}
               </FormGroup>
-
               <FormGroup>
                 <Label>Participants</Label>
                 <div className="d-flex mb-3">
@@ -206,6 +195,15 @@ const CreateOrEditEventModal: React.FC<Props> = ({ isOpen, toggle, onSave, event
                     onChange={(e) => setParticipantEmail(e.target.value)}
                     className="me-2"
                   />
+                  <Input
+                    type="select"
+                    value={participantRole}
+                    onChange={(e) => setParticipantRole(e.target.value as "viewer" | "editor")}
+                    className="me-2"
+                  >
+                    <option value="viewer">Peut voir</option>
+                    <option value="editor">Peut modifier</option>
+                  </Input>
                   <Button color="success" onClick={handleAddParticipant}>
                     Ajouter
                   </Button>
@@ -216,7 +214,10 @@ const CreateOrEditEventModal: React.FC<Props> = ({ isOpen, toggle, onSave, event
                       key={participant.id}
                       className="d-flex justify-content-between align-items-center"
                     >
-                      {participant.name} ({participant.email})
+                      {participant.name} ({participant.email}) -{" "}
+                      <strong>
+                        {participant.role === "viewer" ? "Peut voir" : "Peut modifier"}
+                      </strong>
                       <Button
                         color="danger"
                         size="sm"

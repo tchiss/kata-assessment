@@ -1,5 +1,6 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/sequelize';
+import { Op } from 'sequelize';
 import { Participant } from './models/participant.model';
 import { CreateParticipantInputDto } from './dtos/input/create-participant.dto';
 import { AuthService } from '../auth/auth.service';
@@ -51,6 +52,19 @@ export class ParticipantService {
     }
   }
 
+  async findParticipantsByEmails(emails: string[]) {
+    try {
+      return await this.participantModel.findAll({
+        where: { email: { [Op.in]: emails } },
+      });
+    } catch (error) {
+      this.logger.error(
+        `Failed to find participants by emails: ${JSON.stringify(error)}`,
+      );
+      throw new Error('Could not find participants by emails');
+    }
+  }
+
   async deleteParticipantsByEvent(eventId: string) {
     try {
       await this.participantModel.destroy({ where: { eventId } });
@@ -62,15 +76,16 @@ export class ParticipantService {
     }
   }
 
-  async getById(participantId: string) {
-    const participant = await this.participantModel.findByPk(participantId);
-
-    if (!participant) {
-      throw new NotFoundException(
-        `Participant with ID ${participantId} not found`,
+  async findParticipantsByIds(ids: string[]) {
+    try {
+      return await this.participantModel.findAll({
+        where: { id: { [Op.in]: ids } },
+      });
+    } catch (error) {
+      this.logger.error(
+        `Failed to find participants by IDs: ${JSON.stringify(error)}`,
       );
+      throw new Error('Could not find participants by IDs');
     }
-
-    return participant;
   }
 }

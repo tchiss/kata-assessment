@@ -10,6 +10,8 @@ import { CreateEventInputDto } from './dtos/input/create-event.dto';
 import { CheckConflictsInputDto } from './dtos/input/check-conflicts-input.dto';
 import { ParticipantService } from '../participants/participant.service';
 import { Participant } from '../participants/models/participant.model';
+import { CreateEventOutputDto } from './dtos/output/event';
+import { UpdateEventInputDto } from './dtos/input/update-event.dto';
 
 @Injectable()
 export class EventService {
@@ -18,25 +20,10 @@ export class EventService {
     private participantService: ParticipantService,
   ) {}
 
-  async createEvent(createEventInputDto: CreateEventInputDto) {
-    const { ...eventData } = createEventInputDto;
-
-    if (eventData.startTime >= eventData.endTime) {
-      throw new BadRequestException('End time must be after start time');
-    }
-
-    const event = await this.eventModel.create(eventData);
-
-    await Promise.all(
-      createEventInputDto.participants.map((participant) =>
-        this.participantService.findOrCreate({
-          ...participant,
-          eventId: event.id,
-        }),
-      ),
-    );
-
-    return await this.eventModel.findByPk(event.id, {
+  async listEvents(limit = 100) {
+    // list all events: limit of 100 for technical assessment
+    return await this.eventModel.findAll({
+      limit,
       include: {
         model: Participant,
         attributes: [
@@ -50,6 +37,60 @@ export class EventService {
         ],
       },
     });
+  }
+  async createEvent(
+    createEventInputDto: CreateEventInputDto,
+  ): Promise<CreateEventOutputDto> {
+    const { participants: participantInputs, ...eventData } =
+      createEventInputDto;
+    const participants = await this.participantService.findParticipantsByEmails(
+      participantInputs.map((p) => p.email),
+    );
+
+    const conflicting = await this.checkConflicts(
+      {
+        startTime: eventData.startTime,
+        endTime: eventData.endTime,
+        userIds: [],
+      },
+      participants.map((p) => p.auth0Id),
+    );
+
+    const event = await this.eventModel.create(eventData);
+
+    await Promise.all(
+      createEventInputDto.participants.map((participant) =>
+        this.participantService.findOrCreate({
+          ...participant,
+          eventId: event.id,
+        }),
+      ),
+    );
+
+    const fetchEvent = await this.eventModel.findByPk(event.id, {
+      include: {
+        model: Participant,
+        attributes: [
+          'id',
+          'name',
+          'email',
+          'eventId',
+          'role',
+          'createdAt',
+          'updatedAt',
+        ],
+      },
+    });
+
+    return {
+      event: fetchEvent,
+      warnings: conflicting.conflictedEvents.length
+        ? {
+            message: 'Some participants have scheduling conflicts',
+            conflicts: conflicting.conflictedEvents,
+          }
+        : null,
+    };
   }
 
   async getEventById(eventId: string) {
@@ -90,35 +131,24 @@ export class EventService {
 
   async checkConflicts(
     checkConflictsDto: CheckConflictsInputDto,
-  ): Promise<{ conflictingUsers: string[] }> {
-    const { startTime, endTime, userIds } = checkConflictsDto;
+    auth0Ids?: string[],
+  ): Promise<{ conflictedEvents: Event[] }> {
+    const { startTime, endTime, emails } = checkConflictsDto;
 
-    if (startTime >= endTime) {
-      throw new BadRequestException('Start time must be before end time');
+    if (!auth0Ids && (!emails || emails.length === 0)) {
+      return { conflictedEvents: [] };
     }
 
-    const participants = await Promise.all(
-      userIds.map((userId) => this.participantService.getById(userId)),
-    );
+    if (!auth0Ids) {
+      const participantsList =
+        await this.participantService.findParticipantsByEmails(emails);
+      auth0Ids = [...new Set(participantsList.map((p) => p.auth0Id))];
+    }
 
-    const auth0Ids = participants.map((p) => p.auth0Id);
+    if (auth0Ids.length === 0) {
+      return { conflictedEvents: [] };
+    }
 
-
-    const all = await this.eventModel.findAll({
-      where: {
-        [Op.and]: [
-          { startTime: { [Op.lte]: endTime } },
-          { endTime: { [Op.gte]: startTime } },
-        ],
-      },
-      include: [
-        {
-          association: 'participants',
-          where: { auth0Id: { [Op.in]: auth0Ids } },
-          required: true,
-        },
-      ],
-    });
     const conflicts = await this.eventModel.findAll({
       where: {
         [Op.and]: [
@@ -130,17 +160,14 @@ export class EventService {
         {
           association: 'participants',
           where: { auth0Id: { [Op.in]: auth0Ids } },
+          attributes: { exclude: ['auth0Id'] },
           required: true,
         },
       ],
     });
 
-    const conflictingUsers = conflicts.flatMap((event) =>
-      event.participants.map((participant) => participant.auth0Id),
-    );
-
     return {
-      conflictingUsers: Array.from(new Set(conflictingUsers)),
+      conflictedEvents: conflicts,
     };
   }
 
@@ -180,5 +207,66 @@ export class EventService {
         ],
       },
     });
+  }
+
+  async updateEvent(eventId: string, createEventInputDto: UpdateEventInputDto) {
+    const event = await this.eventModel.findByPk(eventId);
+
+    if (!event) {
+      throw new NotFoundException(`Event with ID ${eventId} not found`);
+    }
+
+    const { participants: participantInputs, ...eventData } =
+      createEventInputDto;
+    const participants = await this.participantService.findParticipantsByEmails(
+      participantInputs.map((p) => p.email),
+    );
+
+    const conflicting = await this.checkConflicts(
+      {
+        startTime: eventData.startTime,
+        endTime: eventData.endTime,
+        userIds: [],
+      },
+      participants.map((p) => p.auth0Id),
+    );
+
+    await event.update(eventData);
+
+    await this.participantService.deleteParticipantsByEvent(eventId);
+
+    await Promise.all(
+      createEventInputDto.participants.map((participant) =>
+        this.participantService.findOrCreate({
+          ...participant,
+          eventId: event.id,
+        }),
+      ),
+    );
+
+    const fetchEvent = await this.eventModel.findByPk(event.id, {
+      include: {
+        model: Participant,
+        attributes: [
+          'id',
+          'name',
+          'email',
+          'eventId',
+          'role',
+          'createdAt',
+          'updatedAt',
+        ],
+      },
+    });
+
+    return {
+      event: fetchEvent,
+      warnings: conflicting.conflictedEvents.length
+        ? {
+            message: 'Some participants have scheduling conflicts',
+            conflicts: conflicting.conflictedEvents,
+          }
+        : null,
+    };
   }
 }

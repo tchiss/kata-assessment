@@ -14,6 +14,7 @@ describe('ParticipantService', () => {
       findOne: jest.fn(),
       create: jest.fn(),
       destroy: jest.fn(),
+      findAll: jest.fn(),
     };
 
     authServiceMock = {
@@ -58,6 +59,7 @@ describe('ParticipantService', () => {
       const result = await service.findOrCreate({
         email: 'test@example.com',
         name: 'Test User',
+        eventId: 'event123',
       });
 
       expect(participantModelMock.findOne).toHaveBeenCalledWith({
@@ -81,6 +83,8 @@ describe('ParticipantService', () => {
         email: 'test@example.com',
         name: 'Test User',
         auth0Id: 'auth0|123',
+        eventId: 'event123',
+        role: 'viewer',
         toJSON: jest.fn().mockReturnValue({
           id: '1',
           email: 'test@example.com',
@@ -91,6 +95,7 @@ describe('ParticipantService', () => {
       const result = await service.findOrCreate({
         email: 'test@example.com',
         name: 'Test User',
+        eventId: 'event123',
       });
 
       expect(participantModelMock.findOne).toHaveBeenCalledWith({
@@ -105,6 +110,8 @@ describe('ParticipantService', () => {
         email: 'test@example.com',
         name: 'Test User',
         auth0Id: 'auth0|123',
+        eventId: 'event123',
+        role: 'viewer',
       });
       expect(result).toEqual({
         id: '1',
@@ -113,14 +120,25 @@ describe('ParticipantService', () => {
       });
     });
 
+    it('should throw an error if eventId is missing', async () => {
+      await expect(
+        service.findOrCreate({
+          email: 'test@example.com',
+          name: 'Test User',
+        }),
+      ).rejects.toThrow('Could not find or create participant');
+
+      expect(participantModelMock.create).not.toHaveBeenCalled();
+    });
+
     it('should throw an error if createUser fails', async () => {
       participantModelMock.findOne.mockResolvedValue(null);
-      authServiceMock.createUser.mockRejectedValue(new Error('Auth0 error'));
 
       await expect(
         service.findOrCreate({
           email: 'test@example.com',
           name: 'Test User',
+          eventId: 'event123',
         }),
       ).rejects.toThrow('Could not find or create participant');
 
@@ -141,9 +159,7 @@ describe('ParticipantService', () => {
     });
 
     it('should throw an error if delete fails', async () => {
-      participantModelMock.destroy.mockRejectedValue(
-        new Error('Delete failed'),
-      );
+      participantModelMock.destroy.mockRejectedValue(new Error('Delete failed'));
 
       await expect(
         service.deleteParticipantsByEvent('event123'),

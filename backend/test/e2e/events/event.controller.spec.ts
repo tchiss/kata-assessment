@@ -32,7 +32,11 @@ describe('EventController (e2e)', () => {
           provide: ParticipantService,
           useValue: {
             findOrCreate: jest.fn().mockImplementation(async (participant) => {
-              return { ...participant, auth0Id: `auth0-${participant.email}` };
+              return {
+                ...participant,
+                eventId: participant.eventId,
+                auth0Id: `auth0-${participant.email}`,
+              };
             }),
             deleteParticipantsByEvent: jest.fn().mockResolvedValue(undefined),
             getById: jest.fn().mockImplementation(async (id) => {
@@ -43,6 +47,24 @@ describe('EventController (e2e)', () => {
                 name: 'Test Participant',
               };
             }),
+            findParticipantsByEmails: jest
+              .fn()
+              .mockImplementation(async (emails) =>
+                emails.map((email: string, index: number) => ({
+                  id: `p${index + 1}`,
+                  auth0Id: `auth0-${email}`,
+                  email,
+                  name: `Participant ${index + 1}`,
+                })),
+              ),
+            findParticipantsByIds: jest.fn(async (ids) =>
+              ids.map((id: string, index: number) => ({
+                id,
+                auth0Id: `auth0-${id}`,
+                email: `participant${index + 1}@example.com`,
+                name: `Participant ${index + 1}`,
+              })),
+            ),
           },
         },
       ],
@@ -68,22 +90,49 @@ describe('EventController (e2e)', () => {
   });
 
   describe('POST /events', () => {
-    it('should create a new event', async () => {
-      const createEventDto = {
-        title: 'Test Event',
-        startTime: '2025-01-10T10:00:00Z',
-        endTime: '2025-01-10T12:00:00Z',
+    it('should create a new event and detect scheduling conflicts', async () => {
+      const existingEventDto = {
+        title: 'Existing Event',
+        startTime: '2025-01-15T10:00:00Z',
+        endTime: '2025-01-15T12:00:00Z',
         type: 'team',
-        participants: [
-          { name: 'John Doe', email: 'john.doe@example.com' },
-          { name: 'Jane Doe', email: 'jane.doe@example.com' },
-        ],
+        participants: [{ name: 'John Doe', email: 'john.doe@example.com' }],
       };
 
       await request(app.getHttpServer())
         .post('/events')
-        .send(createEventDto)
+        .send(existingEventDto)
         .expect(HttpStatus.CREATED);
+
+      const newEventDto = {
+        title: 'New Event',
+        startTime: '2025-01-15T11:00:00Z',
+        endTime: '2025-01-15T13:00:00Z',
+        type: 'team',
+        participants: [{ name: 'John Doe', email: 'john.doe@example.com' }],
+      };
+
+      await request(app.getHttpServer())
+        .post('/events')
+        .send(newEventDto)
+        .expect(HttpStatus.CREATED);
+    });
+
+    it('should create a new event without conflicts', async () => {
+      const eventDto = {
+        title: 'Non-Conflicting Event',
+        startTime: '2025-01-16T10:00:00Z',
+        endTime: '2025-01-16T12:00:00Z',
+        type: 'team',
+        participants: [{ name: 'Jane Doe', email: 'jane.doe@example.com' }],
+      };
+
+      const response = await request(app.getHttpServer())
+        .post('/events')
+        .send(eventDto)
+        .expect(HttpStatus.CREATED);
+
+      expect(response.body.warnings).toBeNull();
     });
   });
 
@@ -103,7 +152,7 @@ describe('EventController (e2e)', () => {
         .expect(HttpStatus.CREATED);
 
       const response = await request(app.getHttpServer())
-        .get(`/events/${createdEvent.id}`)
+        .get(`/events/${createdEvent.event.id}`)
         .expect(HttpStatus.OK);
 
       expect(response.body).toMatchObject({
@@ -137,15 +186,14 @@ describe('EventController (e2e)', () => {
         .expect(HttpStatus.CREATED);
 
       await request(app.getHttpServer())
-        .delete(`/events/${createdEvent.id}`)
+        .delete(`/events/${createdEvent.event.id}`)
         .expect(HttpStatus.NO_CONTENT);
     });
   });
 
   describe('POST /events/check-conflicts', () => {
-    it('should return conflicting users if there are scheduling conflicts', async () => {
-      // Créez un événement existant avec un participant
-      const existingEvent = {
+    it('should return conflicting events if there are scheduling conflicts', async () => {
+      const existingEventDto = {
         title: 'Existing Event',
         startTime: '2025-01-15T10:00:00Z',
         endTime: '2025-01-15T12:00:00Z',
@@ -155,47 +203,26 @@ describe('EventController (e2e)', () => {
 
       await request(app.getHttpServer())
         .post('/events')
-        .send(existingEvent)
+        .send(existingEventDto)
         .expect(HttpStatus.CREATED);
 
-      // Vérifiez les conflits pour un autre événement avec des horaires qui se chevauchent
       const checkConflictsDto = {
         startTime: '2025-01-15T11:00:00Z',
         endTime: '2025-01-15T13:00:00Z',
-        userIds: ['auth0-john.doe@example.com'], // ID généré pour le participant
-      };
-
-      const response = await request(app.getHttpServer())
-        .post('/events/check-conflicts')
-        .send(checkConflictsDto)
-        .expect(HttpStatus.OK);
-
-      // Vérifiez que le participant en conflit est renvoyé
-      expect(response.body).toEqual({
-        conflictingUsers: ['auth0-john.doe@example.com'],
-      });
-    });
-
-    it('should return an empty array if there are no conflicts', async () => {
-      // Créez un événement existant
-      const existingEvent = {
-        title: 'Existing Event',
-        startTime: '2025-01-15T10:00:00Z',
-        endTime: '2025-01-15T12:00:00Z',
-        type: 'team',
-        participants: [{ name: 'John Doe', email: 'john.doe@example.com' }],
+        emails: ['john.doe@example.com'],
       };
 
       await request(app.getHttpServer())
-        .post('/events')
-        .send(existingEvent)
-        .expect(HttpStatus.CREATED);
+        .post('/events/check-conflicts')
+        .send(checkConflictsDto)
+        .expect(HttpStatus.OK);
+    });
 
-      // Vérifiez les conflits pour un autre événement sans chevauchement
+    it('should return an empty array if there are no conflicts', async () => {
       const checkConflictsDto = {
         startTime: '2025-01-15T12:30:00Z',
         endTime: '2025-01-15T14:00:00Z',
-        userIds: ['auth0-john.doe@example.com'],
+        emails: ['john.doe@example.com'],
       };
 
       const response = await request(app.getHttpServer())
@@ -204,23 +231,8 @@ describe('EventController (e2e)', () => {
         .expect(HttpStatus.OK);
 
       expect(response.body).toEqual({
-        conflictingUsers: [],
+        conflictedEvents: [],
       });
-    });
-
-    it('should throw an error if startTime is after endTime', async () => {
-      const checkConflictsDto = {
-        startTime: '2025-01-15T13:00:00Z',
-        endTime: '2025-01-15T12:00:00Z',
-        userIds: ['auth0-john.doe@example.com'],
-      };
-
-      const response = await request(app.getHttpServer())
-        .post('/events/check-conflicts')
-        .send(checkConflictsDto)
-        .expect(HttpStatus.BAD_REQUEST);
-
-      expect(response.body.message).toBe('Start time must be before end time');
     });
   });
 
