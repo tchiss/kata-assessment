@@ -21,20 +21,11 @@ export class EventService {
   ) {}
 
   async listEvents(limit = 100) {
-    // list all events: limit of 100 for technical assessment
     return await this.eventModel.findAll({
       limit,
       include: {
         model: Participant,
-        attributes: [
-          'id',
-          'name',
-          'email',
-          'eventId',
-          'role',
-          'createdAt',
-          'updatedAt',
-        ],
+        through: { attributes: ['role'] },
       },
     });
   }

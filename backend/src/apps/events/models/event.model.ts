@@ -3,9 +3,11 @@ import {
   Column,
   Model,
   DataType,
-  HasMany,
+  BelongsToMany,
 } from 'sequelize-typescript';
 import { Participant } from '../../participants/models/participant.model';
+import { EventParticipant } from './event-participant.model';
+import { EVENT_TYPE } from '../../../common/types/event.type';
 
 @Table({ tableName: 'events', timestamps: true })
 export class Event extends Model {
@@ -25,9 +27,12 @@ export class Event extends Model {
   @Column({ type: DataType.DATE, allowNull: false })
   endTime: Date;
 
-  @Column({ type: DataType.STRING, allowNull: false })
-  type: string;
+  @Column({
+    type: DataType.ENUM('Personal', 'Team', 'Project'),
+    defaultValue: 'Personal',
+  })
+  type: EVENT_TYPE;
 
-  @HasMany(() => Participant)
+  @BelongsToMany(() => Participant, () => EventParticipant)
   participants: Participant[];
 }
