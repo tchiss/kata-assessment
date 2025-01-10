@@ -26,4 +26,4 @@ nodemailer:
     auth:
         user: 'kataassessment@gmail.com'
         pass: 'upzalfnwsnnzgpja'
-    pass: '@KataTest2025'
+    #pass: '@KataTest2025'
