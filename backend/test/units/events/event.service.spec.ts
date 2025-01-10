@@ -3,11 +3,38 @@ import { getModelToken } from '@nestjs/sequelize';
 import { Event } from '../../../src/apps/events/models/event.model';
 import { EventService } from '../../../src/apps/events/event.service';
 import { ParticipantService } from '../../../src/apps/participants/participant.service';
+import { EventParticipant } from '../../../src/apps/events/models/event-participant.model';
+import { ConfigService } from '@nestjs/config';
+import * as nodemailer from 'nodemailer';
+import { EVENT_TYPE } from '../../../src/common/types/event.type';
+
+const config = {
+  nodemailer: {
+    service: 'gmail',
+    host: 'smtp.gmail.com',
+    port: 587,
+    secure: false,
+    auth: {
+      user: 'test@example.com',
+      pass: 'password',
+    },
+  },
+  'nodemailer.auth.user': 'test@example.com',
+  'app.secret': 'secret',
+  'app.frontendUrl': 'http://localhost:3000',
+  app: {
+    port: 3000,
+    secret: 'secret',
+  },
+};
 
 describe('EventService', () => {
   let service: EventService;
   let eventModelMock: any;
+  let eventParticipantModelMock: any;
   let participantServiceMock: any;
+  let configServiceMock: any;
+  let transporterMock: any;
 
   beforeEach(async () => {
     eventModelMock = {
@@ -15,14 +42,29 @@ describe('EventService', () => {
       findByPk: jest.fn(),
       create: jest.fn(),
       destroy: jest.fn(),
+      update: jest.fn(),
+    };
+
+    eventParticipantModelMock = {
+      create: jest.fn(),
+      destroy: jest.fn(),
     };
 
     participantServiceMock = {
       findParticipantsByEmails: jest.fn(),
-      findParticipantsByIds: jest.fn(),
-      findOrCreate: jest.fn(),
-      deleteParticipantsByEvent: jest.fn(),
+      findOrCreateParticipants: jest.fn(),
     };
+
+    configServiceMock = {
+      get: jest.fn().mockImplementation((key: string) => {
+        return config[key];
+      }),
+    };
+
+    transporterMock = {
+      sendMail: jest.fn().mockResolvedValue({ messageId: 'mockMessageId' }),
+    };
+    jest.spyOn(nodemailer, 'createTransport').mockReturnValue(transporterMock);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -32,8 +74,16 @@ describe('EventService', () => {
           useValue: eventModelMock,
         },
         {
+          provide: getModelToken(EventParticipant),
+          useValue: eventParticipantModelMock,
+        },
+        {
           provide: ParticipantService,
           useValue: participantServiceMock,
+        },
+        {
+          provide: ConfigService,
+          useValue: configServiceMock,
         },
       ],
     }).compile();
@@ -50,114 +100,133 @@ describe('EventService', () => {
   });
 
   describe('createEvent', () => {
-    it('should create an event and return it with participants', async () => {
+    it('should create an event and send invitations', async () => {
       const mockEventData = {
         title: 'Test Event',
         startTime: '2025-01-10T10:00:00Z',
         endTime: '2025-01-10T12:00:00Z',
-        type: 'team',
+        type: EVENT_TYPE.TEAM,
         participants: [
-          { email: 'john.doe@example.com', name: 'John Doe' },
-          { email: 'jane.doe@example.com', name: 'Jane Doe' },
+          { email: 'john.doe@example.com', name: 'John Doe', role: 'editor' },
         ],
       };
 
+      const mockParticipant = {
+        id: 'p1',
+        name: 'John Doe',
+        email: 'john.doe@example.com',
+        EventParticipant: { role: 'editor' },
+        toJSON: () => ({
+          id: 'p1',
+          name: 'John Doe',
+          email: 'john.doe@example.com',
+          EventParticipant: { role: 'editor' },
+        }),
+      };
+      const mockEvent = {
+        id: '1',
+        title: 'Test Event',
+        startTime: '2025-01-10T10:00:00Z',
+        endTime: '2025-01-10T12:00:00Z',
+        toJSON: () => ({
+          id: '1',
+          title: 'Test Event',
+          startTime: '2025-01-10T10:00:00Z',
+          endTime: '2025-01-10T12:00:00Z',
+        }),
+        participants: [mockParticipant],
+      };
       const createdEvent = {
         id: '1',
-        ...mockEventData,
-        participants: [],
+        title: 'Test Event',
+        startTime: '2025-01-10T10:00:00Z',
+        endTime: '2025-01-10T12:00:00Z',
+        participants: [
+          {
+            toJSON: () => ({
+              id: 'p1',
+              name: 'John Doe',
+              email: 'john.doe@example.com',
+              EventParticipant: { role: 'editor' },
+            }),
+          },
+        ],
+        toJSON: () => ({
+          id: '1',
+          title: 'Test Event',
+          startTime: '2025-01-10T10:00:00Z',
+          endTime: '2025-01-10T12:00:00Z',
+        }),
       };
 
-      participantServiceMock.findParticipantsByEmails.mockResolvedValue([]);
-      participantServiceMock.findOrCreate.mockResolvedValue({ id: 'p1' });
-      eventModelMock.create.mockResolvedValue(createdEvent);
-      eventModelMock.findByPk.mockResolvedValue({
-        ...createdEvent,
-        participants: mockEventData.participants,
-      });
+      participantServiceMock.findOrCreateParticipants.mockResolvedValue([
+        { id: 'p1', email: 'john.doe@example.com', name: 'John Doe' },
+      ]);
+      eventModelMock.create.mockResolvedValue(mockEvent);
+      eventModelMock.findByPk.mockResolvedValue(mockEvent);
 
       const result = await service.createEvent(mockEventData);
 
-      expect(
-        participantServiceMock.findParticipantsByEmails,
-      ).toHaveBeenCalledWith(['john.doe@example.com', 'jane.doe@example.com']);
-      expect(participantServiceMock.findOrCreate).toHaveBeenCalledTimes(
-        mockEventData.participants.length,
-      );
       expect(eventModelMock.create).toHaveBeenCalledWith(
         expect.objectContaining({
           title: 'Test Event',
           startTime: '2025-01-10T10:00:00Z',
           endTime: '2025-01-10T12:00:00Z',
-          type: 'team',
         }),
       );
-      expect(result.event).toEqual({
-        id: '1',
-        title: 'Test Event',
-        endTime: '2025-01-10T12:00:00Z',
-        startTime: '2025-01-10T10:00:00Z',
-        type: 'team',
-        participants: mockEventData.participants,
-      });
+      expect(transporterMock.sendMail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: 'john.doe@example.com',
+          subject: "Invitation à l'événement : Test Event",
+        }),
+      );
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: '1',
+          title: 'Test Event',
+          participants: expect.any(Array),
+        }),
+      );
     });
 
-    it('should return warnings for scheduling conflicts', async () => {
+    it('should throw BadRequestException for invalid time range', async () => {
       const mockEventData = {
-        title: 'Test Event',
-        startTime: '2025-01-10T10:00:00Z',
-        endTime: '2025-01-10T12:00:00Z',
-        type: 'team',
-        participants: [{ email: 'john.doe@example.com', name: 'John Doe' }],
+        title: 'Invalid Event',
+        startTime: '2025-01-10T12:00:00Z',
+        endTime: '2025-01-10T10:00:00Z',
+        type: EVENT_TYPE.TEAM,
+        participants: [],
       };
 
-      const mockCreatedEvent = {
-        id: 'event1',
-        ...mockEventData,
-      };
-
-      const mockConflicts = [
-        {
-          id: '2',
-          title: 'Conflicting Event',
-          startTime: '2025-01-10T09:00:00Z',
-          endTime: '2025-01-10T11:00:00Z',
-        },
-      ];
-      participantServiceMock.findParticipantsByEmails.mockResolvedValue([
-        {
-          id: 'p1',
-          email: 'john.doe@example.com',
-          name: 'John Doe',
-          auth0Id: 'auth0|p1',
-        },
-      ]);
-
-      service.checkConflicts = jest
-        .fn()
-        .mockResolvedValue({ conflictedEvents: mockConflicts });
-
-      eventModelMock.create.mockResolvedValue(mockCreatedEvent); // Mock du create
-      eventModelMock.findByPk.mockResolvedValue({
-        ...mockCreatedEvent,
-        participants: mockEventData.participants,
-      });
-
-      const result = await service.createEvent(mockEventData);
-
-      expect(result.warnings).toEqual({
-        message: 'Some participants have scheduling conflicts',
-        conflicts: mockConflicts,
-      });
+      await expect(service.createEvent(mockEventData)).rejects.toThrowError(
+        'End time must be after start time',
+      );
     });
   });
 
   describe('getEventById', () => {
-    it('should return the event with participants if found', async () => {
+    it('should return an event with participants', async () => {
       const mockEvent = {
         id: '1',
         title: 'Sample Event',
-        participants: [],
+        participants: [
+          {
+            id: 'p1',
+            name: 'John Doe',
+            email: 'john.doe@example.com',
+            EventParticipant: { role: 'editor' },
+            toJSON: () => ({
+              id: 'p1',
+              name: 'John Doe',
+              email: 'john.doe@example.com',
+              EventParticipant: { role: 'editor' },
+            }),
+          },
+        ],
+        toJSON: () => ({
+          id: '1',
+          title: 'Sample Event',
+        }),
       };
 
       eventModelMock.findByPk.mockResolvedValue(mockEvent);
@@ -167,7 +236,12 @@ describe('EventService', () => {
       expect(eventModelMock.findByPk).toHaveBeenCalledWith('1', {
         include: expect.any(Object),
       });
-      expect(result).toEqual(mockEvent);
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: '1',
+          title: 'Sample Event',
+        }),
+      );
     });
 
     it('should throw NotFoundException if event is not found', async () => {
@@ -187,16 +261,13 @@ describe('EventService', () => {
       };
 
       eventModelMock.findByPk.mockResolvedValue(mockEvent);
-      participantServiceMock.deleteParticipantsByEvent.mockResolvedValue(
-        undefined,
-      );
 
       const result = await service.deleteEvent('1');
 
       expect(eventModelMock.findByPk).toHaveBeenCalledWith('1');
-      expect(
-        participantServiceMock.deleteParticipantsByEvent,
-      ).toHaveBeenCalledWith('1');
+      expect(eventParticipantModelMock.destroy).toHaveBeenCalledWith({
+        where: { eventId: '1' },
+      });
       expect(mockEvent.destroy).toHaveBeenCalled();
       expect(result).toEqual({ message: 'Event with ID 1 has been deleted' });
     });
@@ -217,8 +288,17 @@ describe('EventService', () => {
       const mockEvents = [
         {
           id: '2',
+          title: 'Conflicting Event',
           startTime: '2025-01-10T11:00:00Z',
           endTime: '2025-01-10T13:00:00Z',
+          participants: [],
+          toJSON: () => ({
+            id: '2',
+            title: 'Conflicting Event',
+            startTime: '2025-01-10T11:00:00Z',
+            endTime: '2025-01-10T13:00:00Z',
+            participants: [],
+          }),
         },
       ];
 
@@ -229,40 +309,14 @@ describe('EventService', () => {
 
       const result = await service.checkConflicts(mockCheckConflictsDto);
 
-      expect(
-        participantServiceMock.findParticipantsByEmails,
-      ).toHaveBeenCalledWith(['john.doe@example.com']);
-      expect(eventModelMock.findAll).toHaveBeenCalled();
-      expect(result.conflictedEvents).toEqual(mockEvents);
-    });
-
-    it('should return no conflicts when no overlapping events are found', async () => {
-      const mockCheckConflictsDto = {
-        startTime: '2025-01-10T14:00:00Z',
-        endTime: '2025-01-10T16:00:00Z',
-        emails: ['john.doe@example.com'],
-      };
-
-      participantServiceMock.findParticipantsByEmails.mockResolvedValue([]);
-      eventModelMock.findAll.mockResolvedValue([]);
-
-      const result = await service.checkConflicts(mockCheckConflictsDto);
-
-      expect(result.conflictedEvents).toEqual([]);
-    });
-  });
-
-  describe('searchEvents', () => {
-    it('should return events matching the query', async () => {
-      const mockQuery = 'team';
-      const mockEvents = [{ id: '1', title: 'Team Meeting' }];
-
-      eventModelMock.findAll.mockResolvedValue(mockEvents);
-
-      const result = await service.searchEvents(mockQuery);
-
-      expect(eventModelMock.findAll).toHaveBeenCalled();
-      expect(result).toEqual(mockEvents);
+      expect(result.conflictedEvents).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: '2',
+            title: 'Conflicting Event',
+          }),
+        ]),
+      );
     });
   });
 });

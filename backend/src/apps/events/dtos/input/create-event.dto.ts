@@ -3,11 +3,13 @@ import {
   IsNotEmpty,
   IsDateString,
   ArrayNotEmpty,
+  IsEnum,
   ValidateNested,
 } from 'class-validator';
-import { CreateParticipantInputDto } from '../../../participants/dtos/input/create-participant.dto';
 import { Type } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
+import { CreateParticipantInputDto } from '../../../participants/dtos/input/create-participant.dto';
+import { EVENT_TYPE } from '../../../../common/types/event.type';
 
 export class CreateEventInputDto {
   @ApiProperty({ description: 'The title of the event' })
@@ -27,10 +29,13 @@ export class CreateEventInputDto {
   @IsNotEmpty()
   endTime: string;
 
-  @ApiProperty({ description: 'The type of the event', example: 'meeting' })
-  @IsString()
-  @IsNotEmpty()
-  type: string;
+  @ApiProperty({
+    description: 'The type of the event',
+    enum: EVENT_TYPE,
+    default: EVENT_TYPE.PERSONAL,
+  })
+  @IsEnum(EVENT_TYPE)
+  type: EVENT_TYPE;
 
   @ApiProperty({
     description: 'The list of participants',

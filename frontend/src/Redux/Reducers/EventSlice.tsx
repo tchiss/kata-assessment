@@ -5,6 +5,7 @@ import { Event, EventConflict } from '@/Types/EventType';
 interface EventState {
   events: any[];
   loading: boolean;
+  checkingConflicts?: boolean
   error: any;
   warnings: any | null;
 }
@@ -12,6 +13,7 @@ interface EventState {
 const initialState: EventState = {
   events: [],
   loading: false,
+  checkingConflicts: false,
   error: null,
   warnings: null,
 };
@@ -25,6 +27,20 @@ export const fetchEvents = createAsyncThunk('events/fetchEvents',
       return thunkAPI.rejectWithValue(error?.response?.data);
     }
 });
+
+export const fetchEventById = createAsyncThunk(
+  "events/fetchEventById",
+  async ({ eventId, token }: { eventId: string; token?: string | null },  thunkAPI) => {
+    try {
+      const response = await axios.get(`/events/${eventId}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      return await response.data;
+    } catch (error: any) {
+      return thunkAPI.rejectWithValue(error?.response?.data);
+    }
+  }
+);
 
 export const createEvent = createAsyncThunk(
   'events/createEvent',
@@ -111,16 +127,16 @@ export const eventSlice = createSlice({
 
         // check conflicts case
         builder.addCase(checkConflicts.pending, (state) => {
-            state.loading = true;
+            state.checkingConflicts = true;
         });
 
         builder.addCase(checkConflicts.fulfilled, (state, action) => {
-            state.loading = false;
+            state.checkingConflicts = false;
             state.warnings = action.payload;
         });
 
         builder.addCase(checkConflicts.rejected, (state, action) => {
-            state.loading = false;
+            state.checkingConflicts = false;
             state.error = action.payload;
         });
 

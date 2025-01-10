@@ -9,6 +9,7 @@ import {
   Query,
   HttpCode,
   HttpStatus,
+  Headers,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -64,8 +65,19 @@ export class EventController {
   @ApiOperation({ summary: 'Get an event by ID' })
   @ApiResponse({ status: 200, description: 'The event details.' })
   @ApiResponse({ status: 404, description: 'Event not found.' })
-  async getEventById(@Param('eventId') eventId: string) {
-    return await this.eventService.getEventById(eventId);
+  async getEventById(
+    @Param('eventId') eventId: string,
+    @Headers('Authorization') authHeader?: string,
+  ) {
+    let role = 'viewer';
+    if (authHeader) {
+      const token = authHeader.replace('Bearer ', '');
+      const decoded = this.eventService.verifyInvitationToken(token);
+      role = decoded.role;
+    }
+
+    const event = await this.eventService.getEventById(eventId);
+    return { ...event, role };
   }
 
   @Delete(':eventId')

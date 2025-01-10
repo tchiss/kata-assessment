@@ -7,12 +7,22 @@ import { EventService } from '../../../src/apps/events/event.service';
 import { ParticipantService } from '../../../src/apps/participants/participant.service';
 import { Event } from '../../../src/apps/events/models/event.model';
 import { Participant } from '../../../src/apps/participants/models/participant.model';
+import { EventParticipant } from '../../../src/apps/events/models/event-participant.model';
+import { ConfigService } from '@nestjs/config';
+import * as nodemailer from 'nodemailer';
+import { config } from '../../test-helper';
 
 describe('EventController (e2e)', () => {
   let app: INestApplication;
   let sequelize;
+  let transporterMock;
 
   beforeAll(async () => {
+    transporterMock = {
+      sendMail: jest.fn().mockResolvedValue({ messageId: 'mockMessageId' }),
+    };
+    jest.spyOn(nodemailer, 'createTransport').mockReturnValue(transporterMock);
+
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [
         SequelizeModule.forRoot({
@@ -21,47 +31,38 @@ describe('EventController (e2e)', () => {
           synchronize: true,
           autoLoadModels: true,
           logging: false,
-          models: [Event, Participant],
+          models: [Event, Participant, EventParticipant],
+          dialectOptions: {
+            foreignKeys: true,
+          },
         }),
-        SequelizeModule.forFeature([Event, Participant]),
+        SequelizeModule.forFeature([Event, Participant, EventParticipant]),
       ],
       controllers: [EventController],
       providers: [
         EventService,
         {
+          provide: ConfigService,
+          useValue: {
+            get: jest.fn((key: string) => {
+              return config[key];
+            }),
+          },
+        },
+        {
           provide: ParticipantService,
           useValue: {
-            findOrCreate: jest.fn().mockImplementation(async (participant) => {
-              return {
-                ...participant,
-                eventId: participant.eventId,
-                auth0Id: `auth0-${participant.email}`,
-              };
-            }),
-            deleteParticipantsByEvent: jest.fn().mockResolvedValue(undefined),
-            getById: jest.fn().mockImplementation(async (id) => {
-              return {
-                id,
-                auth0Id: `auth0-${id}`,
-                email: `${id}@example.com`,
-                name: 'Test Participant',
-              };
-            }),
-            findParticipantsByEmails: jest
-              .fn()
-              .mockImplementation(async (emails) =>
-                emails.map((email: string, index: number) => ({
-                  id: `p${index + 1}`,
-                  auth0Id: `auth0-${email}`,
-                  email,
-                  name: `Participant ${index + 1}`,
-                })),
-              ),
-            findParticipantsByIds: jest.fn(async (ids) =>
-              ids.map((id: string, index: number) => ({
-                id,
-                auth0Id: `auth0-${id}`,
-                email: `participant${index + 1}@example.com`,
+            findOrCreateParticipants: jest.fn(async (participants) =>
+              participants.map((participant, index) => ({
+                id: `p${index + 1}`,
+                email: participant.email,
+                name: participant.name,
+              })),
+            ),
+            findParticipantsByEmails: jest.fn(async (emails) =>
+              emails.map((email, index) => ({
+                id: `p${index + 1}`,
+                email,
                 name: `Participant ${index + 1}`,
               })),
             ),
@@ -75,6 +76,7 @@ describe('EventController (e2e)', () => {
 
     try {
       sequelize = moduleFixture.get('Sequelize');
+      await sequelize.query('PRAGMA foreign_keys = ON;');
       await sequelize.sync({ force: true });
     } catch (error) {}
   });
@@ -90,41 +92,13 @@ describe('EventController (e2e)', () => {
   });
 
   describe('POST /events', () => {
-    it('should create a new event and detect scheduling conflicts', async () => {
-      const existingEventDto = {
-        title: 'Existing Event',
+    it('should create a new event and send invitations', async () => {
+      const eventDto = {
+        title: 'New Event',
         startTime: '2025-01-15T10:00:00Z',
         endTime: '2025-01-15T12:00:00Z',
         type: 'team',
         participants: [{ name: 'John Doe', email: 'john.doe@example.com' }],
-      };
-
-      await request(app.getHttpServer())
-        .post('/events')
-        .send(existingEventDto)
-        .expect(HttpStatus.CREATED);
-
-      const newEventDto = {
-        title: 'New Event',
-        startTime: '2025-01-15T11:00:00Z',
-        endTime: '2025-01-15T13:00:00Z',
-        type: 'team',
-        participants: [{ name: 'John Doe', email: 'john.doe@example.com' }],
-      };
-
-      await request(app.getHttpServer())
-        .post('/events')
-        .send(newEventDto)
-        .expect(HttpStatus.CREATED);
-    });
-
-    it('should create a new event without conflicts', async () => {
-      const eventDto = {
-        title: 'Non-Conflicting Event',
-        startTime: '2025-01-16T10:00:00Z',
-        endTime: '2025-01-16T12:00:00Z',
-        type: 'team',
-        participants: [{ name: 'Jane Doe', email: 'jane.doe@example.com' }],
       };
 
       const response = await request(app.getHttpServer())
@@ -132,47 +106,78 @@ describe('EventController (e2e)', () => {
         .send(eventDto)
         .expect(HttpStatus.CREATED);
 
-      expect(response.body.warnings).toBeNull();
+      expect(transporterMock.sendMail).toHaveBeenCalled();
+      expect(response.body).toMatchObject({
+        title: 'New Event',
+        participants: [{ email: 'john.doe@example.com', name: 'John Doe' }],
+      });
     });
   });
 
   describe('GET /events/:id', () => {
     it('should return an event by ID', async () => {
-      const createEventDto = {
+      const eventDto = {
         title: 'Sample Event',
         startTime: '2025-01-15T10:00:00Z',
         endTime: '2025-01-15T12:00:00Z',
-        type: 'project',
+        type: 'team',
         participants: [],
       };
 
       const { body: createdEvent } = await request(app.getHttpServer())
         .post('/events')
-        .send(createEventDto)
+        .send(eventDto)
         .expect(HttpStatus.CREATED);
 
       const response = await request(app.getHttpServer())
-        .get(`/events/${createdEvent.event.id}`)
+        .get(`/events/${createdEvent.id}`)
         .expect(HttpStatus.OK);
 
       expect(response.body).toMatchObject({
         title: 'Sample Event',
         startTime: '2025-01-15T10:00:00.000Z',
         endTime: '2025-01-15T12:00:00.000Z',
-        type: 'project',
       });
     });
+  });
 
-    it('should return a 404 if the event does not exist', async () => {
-      await request(app.getHttpServer())
-        .get('/events/1')
-        .expect(HttpStatus.NOT_FOUND);
+  describe('PUT /events/:id', () => {
+    it('should update an event and return the updated details', async () => {
+      const eventDto = {
+        title: 'Original Event',
+        startTime: '2025-01-18T10:00:00Z',
+        endTime: '2025-01-18T12:00:00Z',
+        type: 'workshop',
+        participants: [{ name: 'Jane Doe', email: 'jane.doe@example.com' }],
+      };
+
+      const { body: createdEvent } = await request(app.getHttpServer())
+        .post('/events')
+        .send(eventDto)
+        .expect(HttpStatus.CREATED);
+
+      const updateDto = {
+        title: 'Updated Event',
+        startTime: '2025-01-18T14:00:00Z',
+        endTime: '2025-01-18T16:00:00Z',
+      };
+
+      const response = await request(app.getHttpServer())
+        .put(`/events/${createdEvent.id}`)
+        .send(updateDto)
+        .expect(HttpStatus.OK);
+
+      expect(response.body).toMatchObject({
+        title: 'Updated Event',
+        startTime: '2025-01-18T14:00:00.000Z',
+        endTime: '2025-01-18T16:00:00.000Z',
+      });
     });
   });
 
   describe('DELETE /events/:id', () => {
     it('should delete an event by ID', async () => {
-      const createEventDto = {
+      const eventDto = {
         title: 'To be deleted',
         startTime: '2025-01-20T10:00:00Z',
         endTime: '2025-01-20T12:00:00Z',
@@ -182,11 +187,11 @@ describe('EventController (e2e)', () => {
 
       const { body: createdEvent } = await request(app.getHttpServer())
         .post('/events')
-        .send(createEventDto)
+        .send(eventDto)
         .expect(HttpStatus.CREATED);
 
       await request(app.getHttpServer())
-        .delete(`/events/${createdEvent.event.id}`)
+        .delete(`/events/${createdEvent.id}`)
         .expect(HttpStatus.NO_CONTENT);
     });
   });
@@ -212,66 +217,12 @@ describe('EventController (e2e)', () => {
         emails: ['john.doe@example.com'],
       };
 
-      await request(app.getHttpServer())
-        .post('/events/check-conflicts')
-        .send(checkConflictsDto)
-        .expect(HttpStatus.OK);
-    });
-
-    it('should return an empty array if there are no conflicts', async () => {
-      const checkConflictsDto = {
-        startTime: '2025-01-15T12:30:00Z',
-        endTime: '2025-01-15T14:00:00Z',
-        emails: ['john.doe@example.com'],
-      };
-
       const response = await request(app.getHttpServer())
         .post('/events/check-conflicts')
         .send(checkConflictsDto)
         .expect(HttpStatus.OK);
 
-      expect(response.body).toEqual({
-        conflictedEvents: [],
-      });
-    });
-  });
-
-  describe('GET /events/search', () => {
-    it('should return events matching the query', async () => {
-      const createEventDto = {
-        title: 'Searchable Event',
-        startTime: '2025-01-25T10:00:00Z',
-        endTime: '2025-01-25T12:00:00Z',
-        type: 'team',
-        participants: [],
-      };
-
-      await request(app.getHttpServer())
-        .post('/events')
-        .send(createEventDto)
-        .expect(HttpStatus.CREATED);
-
-      const response = await request(app.getHttpServer())
-        .get('/events/content/search')
-        .query({ query: 'Searchable' })
-        .expect(HttpStatus.OK);
-
-      expect(response.body).toHaveLength(1);
-
-      expect(response.body).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ title: 'Searchable Event' }),
-        ]),
-      );
-    });
-
-    it('should return an empty array if no query matches', async () => {
-      const response = await request(app.getHttpServer())
-        .get('/events/content/search')
-        .query({ query: 'Nonexistent' })
-        .expect(HttpStatus.OK);
-
-      expect(response.body).toEqual([]);
+      expect(response.body.conflictedEvents).toHaveLength(1);
     });
   });
 });

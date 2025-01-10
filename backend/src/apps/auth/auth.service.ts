@@ -1,4 +1,4 @@
-import { Injectable, Logger, ConflictException } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ManagementClient, AuthenticationClient } from 'auth0';
 import { Auth0ConfigType } from '../../config/env.type';
@@ -42,13 +42,44 @@ export class AuthService {
       const userResponse = await this.managementClient.users.create({
         email: user.email,
         name: user.name,
-        email_verified: true,
+        email_verified: true, // hardcoded Only for technical test
         connection: 'email', // hardcoded Only for technical test
       });
       return userResponse.data;
     } catch (e) {
       this.logger.error('Failed to create user:', e);
       throw e;
+    }
+  }
+
+  async assignRoleToUser(userId: string, roleId: string) {
+    try {
+      await this.managementClient.roles.assignUsers(
+        { id: roleId },
+        { users: [userId] },
+      );
+    } catch (error) {
+      this.logger.error('Failed to assign role to user:', error);
+      throw error;
+    }
+  }
+
+  async getUserRoles(userId: string) {
+    try {
+      const rolesResponse = await this.managementClient.users.getRoles({ id: userId });
+      return rolesResponse.data;
+    } catch (error) {
+      this.logger.error('Failed to get user roles:', error);
+      throw error;
+    }
+  }
+
+  async deleteUser(userId: string) {
+    try {
+      await this.managementClient.users.delete({ id: userId });
+    } catch (error) {
+      this.logger.error('Failed to delete user:', error);
+      throw error;
     }
   }
 }

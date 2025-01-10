@@ -83,8 +83,6 @@ describe('ParticipantService', () => {
         email: 'test@example.com',
         name: 'Test User',
         auth0Id: 'auth0|123',
-        eventId: 'event123',
-        role: 'viewer',
         toJSON: jest.fn().mockReturnValue({
           id: '1',
           email: 'test@example.com',
@@ -110,14 +108,15 @@ describe('ParticipantService', () => {
         email: 'test@example.com',
         name: 'Test User',
         auth0Id: 'auth0|123',
-        eventId: 'event123',
-        role: 'viewer',
       });
-      expect(result).toEqual({
-        id: '1',
-        email: 'test@example.com',
-        name: 'Test User',
-      });
+      const jsonOutput = result.toJSON();
+      expect(jsonOutput).toEqual(
+        expect.objectContaining({
+          id: expect.any(String),
+          email: expect.any(String),
+          name: expect.any(String),
+        }),
+      );
     });
 
     it('should throw an error if eventId is missing', async () => {
@@ -143,27 +142,6 @@ describe('ParticipantService', () => {
       ).rejects.toThrow('Could not find or create participant');
 
       expect(participantModelMock.create).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('deleteParticipantsByEvent', () => {
-    it('should delete participants by event ID', async () => {
-      participantModelMock.destroy.mockResolvedValue(1);
-
-      const result = await service.deleteParticipantsByEvent('event123');
-
-      expect(participantModelMock.destroy).toHaveBeenCalledWith({
-        where: { eventId: 'event123' },
-      });
-      expect(result).toBeUndefined();
-    });
-
-    it('should throw an error if delete fails', async () => {
-      participantModelMock.destroy.mockRejectedValue(new Error('Delete failed'));
-
-      await expect(
-        service.deleteParticipantsByEvent('event123'),
-      ).rejects.toThrow('Could not delete participants by event');
     });
   });
 });

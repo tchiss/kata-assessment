@@ -4,6 +4,7 @@ import {
   Model,
   DataType,
   ForeignKey,
+  BelongsTo,
 } from 'sequelize-typescript';
 import { Event } from './event.model';
 import { Participant } from '../../participants/models/participant.model';
@@ -24,4 +25,10 @@ export class EventParticipant extends Model {
     defaultValue: 'viewer',
   })
   role: PARTICIPANT_ROLE;
+
+  @BelongsTo(() => Event, { foreignKey: 'eventId' })
+  event: Event;
+
+  @BelongsTo(() => Participant, { foreignKey: 'participantId' })
+  participant: Participant;
 }

@@ -3,6 +3,7 @@ import {
   Column,
   Model,
   DataType,
+  HasMany,
   BelongsToMany,
 } from 'sequelize-typescript';
 import { Participant } from '../../participants/models/participant.model';
@@ -35,4 +36,10 @@ export class Event extends Model {
 
   @BelongsToMany(() => Participant, () => EventParticipant)
   participants: Participant[];
+
+  @HasMany(() => EventParticipant, {
+    foreignKey: 'eventId',
+    onDelete: 'CASCADE',
+  })
+  eventParticipants: EventParticipant[];
 }

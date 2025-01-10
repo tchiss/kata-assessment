@@ -1,23 +1,26 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import {
-  Modal,
-  ModalHeader,
-  ModalBody,
-  ModalFooter,
+  Alert,
   Button,
   FormGroup,
-  Label,
   Input,
+  Label,
   ListGroup,
   ListGroupItem,
+  Modal,
+  ModalBody,
+  ModalFooter,
+  ModalHeader,
 } from "reactstrap";
-import { Formik, Form } from "formik";
+import { Form, Formik } from "formik";
 import * as Yup from "yup";
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 import { Event, EVENT_TYPE, Participant } from "@/Types/EventType";
+import { useAppDispatch } from "@/Redux/Hooks";
+import { checkConflicts } from "@/Redux/Reducers/EventSlice";
 
 const EventSchema = Yup.object().shape({
   title: Yup.string().required("Titre requis"),
@@ -25,81 +28,158 @@ const EventSchema = Yup.object().shape({
   endTime: Yup.date()
     .required("Date de fin requise")
     .min(Yup.ref("startTime"), "La date de fin doit être postérieure à la date de début"),
-  type: Yup.string()
-    .oneOf(["Personnel", "Équipe", "Projet"], "Type invalide")
-    .required("Type requis"),
+  type: Yup.string().required("Type requis"),
 });
 
 interface Props {
   isOpen: boolean;
   toggle: () => void;
   onSave: (event: Event) => void;
+  isSaving?: boolean;
   eventToEdit?: Event;
 }
 
-const CreateOrEditEventModal: React.FC<Props> = ({ isOpen, toggle, onSave, eventToEdit }) => {
-  const [participants, setParticipants] = useState<Participant[]>([]);
-  const [participantName, setParticipantName] = useState("");
-  const [participantEmail, setParticipantEmail] = useState("");
-  const [participantRole, setParticipantRole] = useState<"viewer" | "editor">("viewer");
-
-  const initialValues: Event = {
+const CreateOrEditEventModal: React.FC<Props> = ({ isOpen, toggle, onSave, eventToEdit, isSaving }) => {
+  const dispatch = useAppDispatch();
+  const [formValues, setFormValues] = useState<Event>({
     id: eventToEdit?.id,
     title: eventToEdit?.title || "",
     startTime: eventToEdit?.startTime || "",
     endTime: eventToEdit?.endTime || "",
-    type: eventToEdit?.type || EVENT_TYPE.INIT,
+    type: eventToEdit?.type || EVENT_TYPE.PERSONAL,
     participants: eventToEdit?.participants || [],
-  };
+  });
+
+  const [participants, setParticipants] = useState<Participant[]>(formValues.participants);
+  const [participantName, setParticipantName] = useState("");
+  const [participantEmail, setParticipantEmail] = useState("");
+  const [participantRole, setParticipantRole] = useState<"viewer" | "editor" | "organizer">("viewer");
+  const [alertMessage, setAlertMessage] = useState<string | null>(null);
+  const [isCheckingConflicts, setIsCheckingConflicts] = useState(false);
 
   useEffect(() => {
     if (isOpen && eventToEdit) {
+      setFormValues({
+        id: eventToEdit.id,
+        title: eventToEdit.title || "",
+        startTime: eventToEdit.startTime || "",
+        endTime: eventToEdit.endTime || "",
+        type: eventToEdit.type || EVENT_TYPE.PERSONAL,
+        participants: eventToEdit.participants || [],
+      });
       setParticipants(eventToEdit.participants || []);
     } else if (isOpen) {
+      setFormValues({
+        id: undefined,
+        title: "",
+        startTime: "",
+        endTime: "",
+        type: EVENT_TYPE.PERSONAL,
+        participants: [],
+      });
       setParticipants([]);
     }
   }, [isOpen, eventToEdit]);
 
-  const handleAddParticipant = () => {
-    if (participantName && participantEmail) {
+  const handleAddParticipant = async (ev: Event) => {
+    if (!participantName || !participantEmail) {
+      setAlertMessage("Nom et email sont requis pour ajouter un participant.");
+      return;
+    }
+
+    if (!ev.startTime || !ev.endTime) {
+      setAlertMessage(
+        "Veuillez définir les horaires de début et de fin avant d'ajouter un participant."
+      );
+      return;
+    }
+
+    try {
+      setIsCheckingConflicts(true);
+      const newParticipants = participants.filter(
+        (p) => !eventToEdit?.participants.some((existing) => existing.email === p.email)
+      );
+
+      const emailList = [...newParticipants.map((p) => p.email), participantEmail];
+      const conflictCheckPayload = {
+        startTime: ev.startTime,
+        endTime: ev.endTime,
+        emails: emailList,
+      };
+
+      const result = await dispatch(checkConflicts(conflictCheckPayload)).unwrap();
+
+      if (result.conflictedEvents && result.conflictedEvents.length > 0) {
+        setAlertMessage(
+          "Conflit détecté avec un autre événement. Veuillez ajuster les horaires ou participants."
+        );
+        return;
+      }
+
       setParticipants([
         ...participants,
-        {
-          name: participantName,
-          email: participantEmail,
-          role: participantRole,
-        },
+        { name: participantName, email: participantEmail, role: participantRole },
       ]);
+
       setParticipantName("");
       setParticipantEmail("");
       setParticipantRole("viewer");
+      setAlertMessage(null);
+    } catch (error) {
+      setAlertMessage("Erreur lors de la vérification des conflits. Veuillez réessayer.");
+      console.error("Erreur lors de la vérification des conflits :", error);
+    } finally {
+      setIsCheckingConflicts(false);
     }
   };
 
-  const handleRemoveParticipant = (id: string) => {
-    setParticipants(participants.filter((participant) => participant.id !== id));
+  const handleRemoveParticipant = (index: number) => {
+    setParticipants(participants.filter((_, i) => i !== index));
+  };
+
+  const resetForm = () => {
+    setFormValues({
+      id: undefined,
+      title: "",
+      startTime: "",
+      endTime: "",
+      type: EVENT_TYPE.PERSONAL,
+      participants: [],
+    });
+    setParticipants([]);
+    setParticipantName("");
+    setParticipantEmail("");
+    setParticipantRole("viewer");
+    setAlertMessage(null);
+  };
+
+  const handleCancel = () => {
+    resetForm();
+    toggle();
   };
 
   const handleSubmit = (values: Event) => {
-    const updatedEvent = {
-      ...values,
-      participants,
-    };
-    onSave(updatedEvent);
+    onSave({ ...values, participants });
+    resetForm();
     toggle();
   };
 
   return (
-    <Modal isOpen={isOpen} toggle={toggle} size="lg">
-      <ModalHeader toggle={toggle}>
+    <Modal isOpen={isOpen} toggle={handleCancel} size="lg">
+      <ModalHeader toggle={handleCancel}>
         {eventToEdit ? "Modifier l'Événement" : "Créer un Nouvel Événement"}
       </ModalHeader>
       <ModalBody>
+        {alertMessage && (
+          <Alert color="danger" toggle={() => setAlertMessage(null)}>
+            {alertMessage}
+          </Alert>
+        )}
         <Formik
-          initialValues={initialValues}
+          initialValues={formValues}
           validationSchema={EventSchema}
           onSubmit={handleSubmit}
-          enableReinitialize
+          enableReinitialize={true}
         >
           {({ errors, touched, values, handleChange, handleBlur, setFieldValue }) => (
             <Form>
@@ -128,10 +208,9 @@ const CreateOrEditEventModal: React.FC<Props> = ({ isOpen, toggle, onSave, event
                   onChange={handleChange}
                   onBlur={handleBlur}
                 >
-                  <option value="">Sélectionnez un type</option>
-                  <option value="Personnel">Personnel</option>
-                  <option value="Équipe">Équipe</option>
-                  <option value="Projet">Projet</option>
+                  <option value="Personal">Personnel</option>
+                  <option value="Team">Équipe</option>
+                  <option value="Project">Projet</option>
                 </Input>
                 {errors.type && touched.type && (
                   <div className="text-danger">{errors.type}</div>
@@ -150,7 +229,6 @@ const CreateOrEditEventModal: React.FC<Props> = ({ isOpen, toggle, onSave, event
                   className={`form-control datepicker-input ${
                     touched.startTime && errors.startTime ? "is-invalid" : ""
                   }`}
-                  placeholderText="Sélectionnez la date et l'heure de début"
                 />
                 {errors.startTime && touched.startTime && (
                   <div className="text-danger">{errors.startTime}</div>
@@ -161,19 +239,15 @@ const CreateOrEditEventModal: React.FC<Props> = ({ isOpen, toggle, onSave, event
                 <DatePicker
                   selected={values.endTime ? new Date(values.endTime) : null}
                   onChange={(date) => setFieldValue("endTime", date?.toISOString())}
-                  minDate={new Date()}
+                  minDate={values.startTime ? new Date(values.startTime) : new Date()}
                   showTimeSelect
-                  minTime={new Date(new Date().setHours(0, 0, 0, 0))}
-                  maxTime={new Date(new Date().setHours(23, 59, 59, 999))}
                   timeFormat="HH:mm"
                   timeIntervals={15}
                   dateFormat="Pp"
                   className={`form-control datepicker-input ${
                     touched.endTime && errors.endTime ? "is-invalid" : ""
                   }`}
-                  placeholderText="Sélectionnez la date et l'heure de fin"
                 />
-
                 {errors.endTime && touched.endTime && (
                   <div className="text-danger">{errors.endTime}</div>
                 )}
@@ -198,30 +272,37 @@ const CreateOrEditEventModal: React.FC<Props> = ({ isOpen, toggle, onSave, event
                   <Input
                     type="select"
                     value={participantRole}
-                    onChange={(e) => setParticipantRole(e.target.value as "viewer" | "editor")}
+                    onChange={(e) => setParticipantRole(e.target.value as "viewer" | "editor" | "organizer")}
                     className="me-2"
                   >
                     <option value="viewer">Peut voir</option>
                     <option value="editor">Peut modifier</option>
+                    <option value="organizer">Peut organiser</option
+                    >
                   </Input>
-                  <Button color="success" onClick={handleAddParticipant}>
-                    Ajouter
+                  <Button
+                    color="success"
+                    onClick={() => handleAddParticipant(values)}
+                    disabled={isCheckingConflicts}
+                  >
+                    {isCheckingConflicts ? "Vérification..." : "Ajouter"}
                   </Button>
                 </div>
                 <ListGroup>
-                  {participants.map((participant) => (
-                    <ListGroupItem
-                      key={participant.id}
-                      className="d-flex justify-content-between align-items-center"
-                    >
-                      {participant.name} ({participant.email}) -{" "}
-                      <strong>
-                        {participant.role === "viewer" ? "Peut voir" : "Peut modifier"}
-                      </strong>
+                  {participants.map((participant, index) => (
+                    <ListGroupItem key={index} className="d-flex justify-content-between">
+                      <div>
+                        {participant.name} ({participant.email}) -{" "}
+                        {participant.role === "viewer"
+                          ? "Peut voir"
+                          : participant.role === "editor"
+                            ? "Peut modifier"
+                            : "Peut organiser"}
+                      </div>
                       <Button
                         color="danger"
                         size="sm"
-                        onClick={() => handleRemoveParticipant(participant.id!)}
+                        onClick={() => handleRemoveParticipant(index)}
                       >
                         Supprimer
                       </Button>
@@ -230,10 +311,10 @@ const CreateOrEditEventModal: React.FC<Props> = ({ isOpen, toggle, onSave, event
                 </ListGroup>
               </FormGroup>
               <ModalFooter>
-                <Button color="primary" type="submit">
-                  Enregistrer
+                <Button color="primary" type="submit" disabled={isSaving}>
+                  {isSaving ? "Enregistrement..." : "Enregistrer"}
                 </Button>
-                <Button color="secondary" onClick={toggle}>
+                <Button color="secondary" onClick={handleCancel}>
                   Annuler
                 </Button>
               </ModalFooter>

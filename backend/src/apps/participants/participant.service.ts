@@ -24,26 +24,16 @@ export class ParticipantService {
         return existingParticipant;
       }
 
-      if (!participant.eventId) {
-        throw new Error('Event ID is required to create a participant');
-      }
-
       const createdUser = await this.authService.createUser({
         email: participant.email,
         name: participant.name,
       });
 
-      const newParticipant = await this.participantModel.create({
+      return await this.participantModel.create({
         email: createdUser.email,
         name: createdUser.name,
         auth0Id: createdUser.user_id,
-        eventId: participant.eventId,
-        role: participant.role || 'viewer',
       });
-
-      const { id, email, name } = newParticipant.toJSON();
-
-      return { id, email, name };
     } catch (error) {
       this.logger.error(
         `Failed to find or create participant: ${JSON.stringify(error)}`,
@@ -65,27 +55,18 @@ export class ParticipantService {
     }
   }
 
-  async deleteParticipantsByEvent(eventId: string) {
+  async findOrCreateParticipants(participants: CreateParticipantInputDto[]) {
     try {
-      await this.participantModel.destroy({ where: { eventId } });
+      return await Promise.all(
+        participants.map(async (participant) => {
+          return await this.findOrCreate(participant);
+        }),
+      );
     } catch (error) {
       this.logger.error(
-        `Failed to delete participants by event: ${JSON.stringify(error)}`,
+        `Failed to find or create participants: ${JSON.stringify(error)}`,
       );
-      throw new Error('Could not delete participants by event');
-    }
-  }
-
-  async findParticipantsByIds(ids: string[]) {
-    try {
-      return await this.participantModel.findAll({
-        where: { id: { [Op.in]: ids } },
-      });
-    } catch (error) {
-      this.logger.error(
-        `Failed to find participants by IDs: ${JSON.stringify(error)}`,
-      );
-      throw new Error('Could not find participants by IDs');
+      throw new Error('Could not find or create participants');
     }
   }
 }

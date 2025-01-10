@@ -23,21 +23,22 @@ import {
   checkConflicts,
   deleteEvent,
 } from "@/Redux/Reducers/EventSlice";
-import { Event, EventOutput } from '@/Types/EventType';
+import { Event, EventOutput, Participant } from '@/Types/EventType';
 import CreateOrEditEventModal from "@/Components/CreateOrEditEventModal";
 import { formatDate, translateEventType } from "@/Helpers/EventsHelper";
 
 const EventList: React.FC = () => {
   const router = useRouter();
   const dispatch = useAppDispatch();
-  const { events, loading } = useAppSelector((state) => state.events);
+  const { events } = useAppSelector((state) => state.events);
 
   const [filteredEvents, setFilteredEvents] = useState<EventOutput[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [eventToEdit, setEventToEdit] = useState<Event | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
-  const [alertType, setAlertType] = useState<"success" | "danger" | undefined>();
+  const [alertType, setAlertType] = useState<"success" | "danger" | "info" | undefined>();
+  const [isSaving, setIsSaving] = useState(false);
 
 
 
@@ -63,44 +64,130 @@ const EventList: React.FC = () => {
     toggleModal();
   };
 
+  const handleUpdateEvent = async (event: Event): Promise<boolean> => {
+    const modifiedFields = getModifiedFields(eventToEdit!, event);
+
+    if (Object.keys(modifiedFields).length === 0) {
+      setAlertMessage("Aucune modification détectée.");
+      setAlertType("info");
+      return false; // Échec logique
+    }
+
+    const hasDateChanges = "startTime" in modifiedFields || "endTime" in modifiedFields;
+
+    if (hasDateChanges) {
+      const hasConflicts = await checkEventConflicts(
+        modifiedFields.startTime || eventToEdit!.startTime,
+        modifiedFields.endTime || eventToEdit!.endTime
+      );
+
+      if (hasConflicts) {
+        setAlertMessage(
+          "Conflit détecté avec un autre événement. Veuillez ajuster les horaires."
+        );
+        setAlertType("danger");
+        return false; // Échec logique
+      }
+    }
+
+    try {
+      const updatedEvent = { id: eventToEdit!.id, ...modifiedFields };
+      await dispatch(updateEvent(updatedEvent)).unwrap();
+
+      setAlertMessage("Événement modifié avec succès.");
+      setAlertType("success");
+      return true;
+    } catch (error) {
+      setAlertMessage("Une erreur s'est produite lors de la mise à jour. Veuillez réessayer.");
+      setAlertType("danger");
+      console.error("Erreur lors de la mise à jour :", error);
+      return false;
+    }
+  };
+
+  const handleCreateEvent = async (event: Event): Promise<boolean> => {
+    try {
+      setIsSaving(true);
+
+      const newEvent = {
+        title: event.title,
+        type: event.type,
+        startTime: event.startTime,
+        endTime: event.endTime,
+        participants: event.participants.map((participant) => ({
+          name: participant.name,
+          email: participant.email,
+          role: participant.role,
+        })),
+      };
+
+      await dispatch(createEvent(newEvent)).unwrap();
+      setAlertMessage("Événement créé avec succès.");
+      setAlertType("success");
+      return true;
+    } catch (error) {
+      setAlertMessage("Une erreur s'est produite lors de la création. Veuillez réessayer.");
+      setAlertType("danger");
+      console.error("Erreur lors de la création :", error);
+      return false;
+    }
+  };
+
+  const checkEventConflicts = async (
+    startTime: string,
+    endTime: string,
+    participants?: Participant[]
+  ): Promise<boolean> => {
+    try {
+      const conflictCheckPayload = {
+        startTime,
+        endTime,
+        emails: participants ? participants.map((p) => p.email) : [],
+      };
+
+      const result = await dispatch(checkConflicts(conflictCheckPayload)).unwrap();
+
+      return result.conflictedEvents && result.conflictedEvents.length > 0;
+    } catch (error) {
+      console.error("Erreur lors de la vérification des conflits :", error);
+      return true;
+    }
+  };
+
+
+  const getModifiedFields = (originalEvent: Event, updatedEvent: Event): Partial<Event> => {
+    const modifiedFields: Partial<Event> = {};
+
+    for (const key in updatedEvent) {
+      if (
+        key !== "id" &&
+        updatedEvent[key as keyof Event] !== originalEvent[key as keyof Event]
+      ) {
+        modifiedFields[key as keyof Event] = updatedEvent[key as keyof Event] as any;
+      }
+    }
+
+    return modifiedFields;
+  };
+
   const handleSave = async (event: Event | EventOutput) => {
     try {
-      if (event.id) {
-        const conflictCheckPayload = {
-          startTime: event.startTime,
-          endTime: event.endTime,
-          emails: event.participants.map((participant) => participant.email),
-        }
-        const result = await dispatch(checkConflicts(conflictCheckPayload)).unwrap();
-        if (result.conflictedEvents && result.conflictedEvents.length > 0) {
-          console.warn("Conflits détectés :", result.conflictedEvents);
-          alert(
-            "Conflits détectés avec d'autres événements. Veuillez vérifier les horaires."
-          );
-          return;
-        }
-        await dispatch(updateEvent(event)).unwrap();
+      setIsSaving(true);
+      if (eventToEdit) {
+        await handleUpdateEvent(event);
+
       } else {
-        await dispatch(createEvent({
-          title: event.title,
-          type: event.type,
-          startTime: event.startTime,
-          endTime: event.endTime,
-          participants: event.participants.map((participant) => ({
-            name: participant.name,
-            email: participant.email,
-            role: participant.role,
-          })),
-        })).unwrap();
-        setAlertMessage("Événement créé avec succès.");
-        setAlertType("success");
+        await handleCreateEvent(event);
       }
 
       toggleModal();
+      dispatch(fetchEvents());
     } catch (error) {
       setAlertMessage("Une erreur s'est produite. Veuillez réessayer.");
       setAlertType("danger");
       console.error("Erreur lors de la sauvegarde :", error);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -141,10 +228,6 @@ const EventList: React.FC = () => {
   const navigateToCalendar = () => {
     router.push("/events/calendar");
   };
-
-  if (loading) {
-    return <div>Chargement...</div>;
-  }
 
   return (
     <div style={{ backgroundColor: "#f8f9fa", minHeight: "100vh", padding: "2rem 0" }}>
@@ -210,6 +293,7 @@ const EventList: React.FC = () => {
           isOpen={isModalOpen}
           toggle={toggleModal}
           onSave={handleSave}
+          isSaving={isSaving}
           eventToEdit={eventToEdit || undefined}
         />
       </Container>
