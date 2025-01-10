@@ -70,7 +70,7 @@ const EventList: React.FC = () => {
     if (Object.keys(modifiedFields).length === 0) {
       setAlertMessage("Aucune modification détectée.");
       setAlertType("info");
-      return false; // Échec logique
+      return false;
     }
 
     const hasDateChanges = "startTime" in modifiedFields || "endTime" in modifiedFields;
@@ -86,7 +86,7 @@ const EventList: React.FC = () => {
           "Conflit détecté avec un autre événement. Veuillez ajuster les horaires."
         );
         setAlertType("danger");
-        return false; // Échec logique
+        return false;
       }
     }
 

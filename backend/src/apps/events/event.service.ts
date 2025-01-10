@@ -233,7 +233,6 @@ export class EventService {
     const { participants: participantInputs = [], ...eventData } =
       updateEventInputDto;
 
-    // Mettre à jour uniquement les champs modifiés
     const updatedEventData = this.getUpdatedFields(event, eventData);
     if (Object.keys(updatedEventData).length > 0) {
       await event.update(updatedEventData);

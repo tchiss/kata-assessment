@@ -96,7 +96,6 @@ export const eventSlice = createSlice({
     initialState,
     reducers: {},
     extraReducers: (builder) => {
-        // fetch Events case
         builder.addCase(fetchEvents.pending, (state) => {
             state.loading = true;
         });
@@ -125,7 +124,6 @@ export const eventSlice = createSlice({
             state.error = action.payload;
         });
 
-        // check conflicts case
         builder.addCase(checkConflicts.pending, (state) => {
             state.checkingConflicts = true;
         });
@@ -140,7 +138,6 @@ export const eventSlice = createSlice({
             state.error = action.payload;
         });
 
-        // update Event case
         builder.addCase(updateEvent.pending, (state) => {
             state.loading = true;
         });
